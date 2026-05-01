@@ -136,12 +136,6 @@ Upload an image for prediction.
 
 ---
 
-## 📸 Screenshots
-
-> Add screenshots here after uploading images
-
----
-
 ## ⚠️ Disclaimer
 
 * This system is **NOT a clinical diagnostic tool**
