@@ -1,21 +1,3 @@
-#!/usr/bin/env python3
-"""
-HematoScan AI — CNN Training Script
-Trains a 6-block custom CNN for binary blood cancer classification.
-
-Dataset: Kaggle Blood Cell Cancer [ALL] (Acute Lymphoblastic Leukemia)
-  - Class 0: HEM  — Healthy (benign) cells
-  - Class 1: ALL  — Leukemia blast cells (malignant)
-
-Quick-start (no Kaggle data needed):
-  python model/train_model.py
-  → trains on synthetic data, saves model/blood_cancer_model.keras
-
-With real Kaggle data:
-  kaggle datasets download andrewmvd/leukemia-classification
-  unzip leukemia-classification.zip -d data/
-  python model/train_model.py --data data/
-"""
 
 import os, sys, json, argparse, time
 import numpy as np
