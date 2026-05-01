@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""
+HematoScan AI — CNN Training Script
+Trains a 6-block custom CNN for binary blood cancer classification.
+
+Dataset: Kaggle Blood Cell Cancer [ALL] (Acute Lymphoblastic Leukemia)
+  - Class 0: HEM  — Healthy (benign) cells
+  - Class 1: ALL  — Leukemia blast cells (malignant)
+
+Quick-start (no Kaggle data needed):
+  python model/train_model.py
+  → trains on synthetic data, saves model/blood_cancer_model.keras
+
+With real Kaggle data:
+  kaggle datasets download andrewmvd/leukemia-classification
+  unzip leukemia-classification.zip -d data/
+  python model/train_model.py --data data/
+"""
+
+import os, sys, json, argparse, time
+import numpy as np
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+
+# ── Config ────────────────────────────────────────────────────────────────────
+IMG_SIZE   = (96, 96)
+BATCH      = 32
+EPOCHS_SYN = 15   # synthetic (fast demo)
+EPOCHS_REAL= 30   # real dataset
+LR         = 1e-3
+SAVE_PATH  = os.path.join(os.path.dirname(__file__), 'blood_cancer_model.keras')
+META_PATH  = os.path.join(os.path.dirname(__file__), 'model_meta.json')
+
+# ── Architecture ──────────────────────────────────────────────────────────────
+def build_model(input_shape=(96, 96, 3)) -> keras.Model:
+    """
+    6 Conv-Block CNN  (~849K params)
+    Block 1-2: 32 filters   → MaxPool → Dropout(0.25)
+    Block 3-4: 64 filters   → MaxPool → Dropout(0.25)
+    Block 5-6: 128 filters  → MaxPool → Dropout(0.30)
+    + Dense 512 → BN → Dropout(0.5)
+    + Dense 256 → Dropout(0.4)
+    + Dense 1 sigmoid
+    """
+    inp = keras.Input(shape=input_shape, name='image_input')
+
+    # Block 1
+    x = layers.Conv2D(32, 3, padding='same', activation='relu')(inp)
+    x = layers.BatchNormalization()(x)
+    # Block 2
+    x = layers.Conv2D(32, 3, padding='same', activation='relu')(x)
+    x = layers.MaxPooling2D()(x)
+    x = layers.Dropout(0.25)(x)
+
+    # Block 3
+    x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    # Block 4
+    x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+    x = layers.MaxPooling2D()(x)
+    x = layers.Dropout(0.25)(x)
+
+    # Block 5
+    x = layers.Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    # Block 6
+    x = layers.Conv2D(128, 3, padding='same', activation='relu')(x)
+    x = layers.MaxPooling2D()(x)
+    x = layers.Dropout(0.30)(x)
+
+    # Head
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.50)(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.40)(x)
+    out = layers.Dense(1, activation='sigmoid', name='cancer_prob')(x)
+
+    model = keras.Model(inp, out, name='HematoScanCNN')
+    model.compile(
+        optimizer=keras.optimizers.Adam(LR),
+        loss='binary_crossentropy',
+        metrics=['accuracy',
+                 keras.metrics.AUC(name='auc'),
+                 keras.metrics.Precision(name='precision'),
+                 keras.metrics.Recall(name='recall')],
+    )
+    return model
+
+
+# ── Synthetic data (runs without Kaggle download) ─────────────────────────────
+def _synthetic_cell(label: int, size=96) -> np.ndarray:
+    """Generate a plausible H&E-stained blood cell patch."""
+    img = np.zeros((size, size, 3), dtype=np.float32)
+    yy, xx = np.ogrid[:size, :size]
+
+    if label == 0:   # Benign — compact, regular nucleus
+        img[:, :] = [0.93, 0.83, 0.87]
+        for _ in range(np.random.randint(3, 6)):
+            cx, cy = np.random.randint(15, size-15), np.random.randint(15, size-15)
+            r = np.random.randint(6, 12)
+            m  = (xx-cx)**2 + (yy-cy)**2 <= r**2
+            m2 = ((xx-cx)**2+(yy-cy)**2 <= (r+5)**2) & ~m
+            img[m]  = [0.26, 0.11, 0.56]
+            img[m2] = [0.65, 0.55, 0.72]
+    else:            # Malignant — large irregular blast cells
+        img[:, :] = [0.86, 0.80, 0.91]
+        for _ in range(np.random.randint(6, 11)):
+            cx, cy = np.random.randint(15, size-15), np.random.randint(15, size-15)
+            r  = np.random.randint(16, 28)
+            ns = np.random.rand(size, size) * 0.45
+            m  = ((xx-cx)**2+(yy-cy)**2 <= r**2) & (ns > 0.12)
+            img[m] = [0.16, 0.06, 0.48]
+            nx, ny = cx+np.random.randint(-5,6), cy+np.random.randint(-5,6)
+            nm = (xx-nx)**2+(yy-ny)**2 <= 4**2
+            img[nm] = [0.83, 0.19, 0.23]
+
+    # RBC background cells
+    for _ in range(np.random.randint(2, 6)):
+        cx2, cy2 = np.random.randint(5, size-5), np.random.randint(5, size-5)
+        rm = (xx-cx2)**2+(yy-cy2)**2 <= np.random.randint(4,9)**2
+        img[rm] = [0.80, 0.30, 0.28]
+
+    img += np.random.normal(0, 0.015, img.shape)
+    return np.clip(img, 0, 1)
+
+
+def make_synthetic_dataset(n_train=3200, n_val=800):
+    print(f"  Generating {n_train} train + {n_val} val synthetic images…")
+    def _gen(n):
+        X, y = [], []
+        for i in range(n):
+            lbl = i % 2
+            X.append(_synthetic_cell(lbl))
+            y.append(float(lbl))
+        return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32)
+
+    Xtr, ytr = _gen(n_train)
+    Xv,  yv  = _gen(n_val)
+    return (Xtr, ytr), (Xv, yv)
+
+
+# ── Real Kaggle data loader ───────────────────────────────────────────────────
+def make_real_dataset(data_dir: str):
+    """
+    Expects data_dir to contain:
+      data_dir/
+        train/  HEM/  ALL/
+        test/   HEM/  ALL/
+    or any ImageDataGenerator-compatible layout.
+    """
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+    aug = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=20,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.1,
+        zoom_range=0.15,
+        horizontal_flip=True,
+        vertical_flip=True,
+        fill_mode='reflect',
+        validation_split=0.2,
+    )
+    train_gen = aug.flow_from_directory(
+        data_dir, target_size=IMG_SIZE, batch_size=BATCH,
+        class_mode='binary', subset='training', seed=42,
+    )
+    val_gen = aug.flow_from_directory(
+        data_dir, target_size=IMG_SIZE, batch_size=BATCH,
+        class_mode='binary', subset='validation', seed=42,
+    )
+    return train_gen, val_gen, True   # True = is_generator
+
+
+# ── Training ──────────────────────────────────────────────────────────────────
+def train(data_dir=None):
+    print("\n" + "="*55)
+    print("  🔬 HematoScan AI — Model Training")
+    print("="*55)
+
+    model = build_model((*IMG_SIZE, 3))
+    model.summary(print_fn=lambda s: print("  " + s))
+    print(f"\n  Total parameters: {model.count_params():,}")
+
+    callbacks = [
+        keras.callbacks.EarlyStopping(patience=6, restore_best_weights=True,
+                                      monitor='val_auc', mode='max', verbose=1),
+        keras.callbacks.ReduceLROnPlateau(factor=0.4, patience=3,
+                                          monitor='val_loss', verbose=1),
+        keras.callbacks.ModelCheckpoint(SAVE_PATH, save_best_only=True,
+                                        monitor='val_auc', mode='max', verbose=0),
+    ]
+
+    use_real = False
+    if data_dir and os.path.isdir(data_dir):
+        print(f"\n  Using real dataset from: {data_dir}")
+        train_data, val_data, use_real = make_real_dataset(data_dir)
+        epochs = EPOCHS_REAL
+    else:
+        if data_dir:
+            print(f"  ⚠  data_dir '{data_dir}' not found — falling back to synthetic data.")
+        else:
+            print("  No --data path provided → using synthetic data (demo mode).")
+        print("  Tip: download the real dataset with:")
+        print("    kaggle datasets download andrewmvd/leukemia-classification")
+        print("    unzip leukemia-classification.zip -d data/")
+        print("    python model/train_model.py --data data/\n")
+        (Xtr, ytr), (Xv, yv) = make_synthetic_dataset()
+        train_data = (Xtr, ytr)
+        val_data   = (Xv,  yv)
+        epochs = EPOCHS_SYN
+
+    print(f"\n  Training for up to {epochs} epochs…\n")
+    t0 = time.time()
+
+    if use_real:
+        history = model.fit(train_data, validation_data=val_data,
+                            epochs=epochs, callbacks=callbacks)
+    else:
+        history = model.fit(*train_data, validation_data=val_data,
+                            epochs=epochs, batch_size=BATCH,
+                            callbacks=callbacks, verbose=1)
+
+    elapsed = time.time() - t0
+    print(f"\n  ✓ Training done in {elapsed:.0f}s")
+
+    # Save model
+    model.save(SAVE_PATH)
+    print(f"  ✓ Model saved → {SAVE_PATH}")
+
+    # Update meta with real performance
+    val_metrics = {k: float(v[-1]) for k, v in history.history.items()
+                   if k.startswith('val_')}
+
+    with open(META_PATH) as f:
+        meta = json.load(f)
+
+    meta['performance'] = {
+        'val_accuracy':  round(val_metrics.get('val_accuracy', 0), 4),
+        'val_loss':      round(val_metrics.get('val_loss', 0), 4),
+        'val_auc':       round(val_metrics.get('val_auc', 0), 4),
+        'val_precision': round(val_metrics.get('val_precision', 0), 4),
+        'val_recall':    round(val_metrics.get('val_recall', 0), 4),
+        'val_f1':        round(2 * val_metrics.get('val_precision', 0) *
+                               val_metrics.get('val_recall', 0) /
+                               max(val_metrics.get('val_precision', 0) +
+                                   val_metrics.get('val_recall', 0), 1e-8), 4),
+    }
+    meta['training']['epochs_run'] = len(history.history['loss'])
+    meta['training']['used_synthetic'] = not use_real
+
+    with open(META_PATH, 'w') as f:
+        json.dump(meta, f, indent=2)
+    print(f"  ✓ Metadata updated → {META_PATH}")
+
+    print("\n  Performance on validation set:")
+    for k, v in meta['performance'].items():
+        print(f"    {k:<20} {v:.4f}")
+    print()
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Train HematoScan CNN')
+    parser.add_argument('--data', type=str, default=None,
+                        help='Path to dataset directory (optional; uses synthetic data if omitted)')
+    args = parser.parse_args()
+    train(args.data)

@@ -1,0 +1,125 @@
+# 🔬 HematoScan AI — Blood Cancer Detection System
+
+A full-stack web application that detects blood cancer (Acute Lymphoblastic Leukemia)
+from microscopy images using a custom CNN trained on Kaggle blood cell data.
+
+## 🏗️ Architecture
+
+```
+blood-cancer-app/
+├── app.py                    # Flask backend + prediction API
+├── run.py                    # Easy launcher
+├── requirements.txt          # Python dependencies
+├── templates/
+│   └── index.html           # Full frontend (dark UI, drag & drop)
+├── model/
+│   ├── train_model.py        # CNN training script
+│   ├── blood_cancer_model.keras  # Trained model weights
+│   └── model_meta.json       # Model metadata & metrics
+└── uploads/                  # Temp uploaded images
+```
+
+## 🤖 ML Model
+
+| Property | Value |
+|----------|-------|
+| Architecture | Custom CNN (6 Conv Blocks) |
+| Parameters | 849,313 |
+| Input Size | 96×96×3 |
+| Output | Binary sigmoid (Benign/Malignant) |
+| Loss | Binary Cross-Entropy |
+| Optimizer | Adam (lr=0.001) |
+| Regularization | BatchNorm, Dropout(0.25–0.5) |
+
+### CNN Architecture
+```
+Conv2D(32) → BN → Conv2D(32) → MaxPool → Dropout(0.25)
+Conv2D(64) → BN → Conv2D(64) → MaxPool → Dropout(0.25)
+Conv2D(128) → BN → Conv2D(128) → MaxPool → Dropout(0.3)
+Conv2D(256) → BN → GlobalAveragePooling
+Dense(512) → BN → Dropout(0.5)
+Dense(256) → Dropout(0.4)
+Dense(1, sigmoid) → Binary output
+```
+
+## 📊 Kaggle Dataset
+
+- **Name**: Blood Cell Cancer [ALL] - Acute Lymphoblastic Leukemia
+- **URL**: https://www.kaggle.com/datasets/andrewmvd/leukemia-classification
+- **Classes**: HEM (Healthy) vs ALL (Leukemia blast cells)
+- **Images**: 4,000+ H&E stained microscopy images
+- **Format**: JPG, 450×450 pixels
+
+### To use the real Kaggle dataset:
+```bash
+# Install kaggle CLI
+pip install kaggle
+
+# Download dataset
+kaggle datasets download andrewmvd/leukemia-classification
+unzip leukemia-classification.zip -d data/
+
+# Modify train_model.py to use real data path
+# Replace gen_data() with ImageDataGenerator from data/ folder
+```
+
+## 🚀 Quick Start
+
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Run the app
+python run.py
+
+# 3. Open browser
+# http://localhost:5000
+```
+
+## 🌐 API Endpoints
+
+### POST /predict
+Upload a blood cell image for cancer detection.
+
+**Request**: `multipart/form-data` with `image` field
+
+**Response**:
+```json
+{
+  "status": "success",
+  "prediction": {
+    "label": "Benign (Normal)",
+    "is_malignant": false,
+    "confidence": 87.5,
+    "benign_probability": 87.5,
+    "malignant_probability": 12.5,
+    "risk_level": "LOW"
+  },
+  "cell_features": {
+    "nuclear_density": 42.3,
+    "nuclear_area_pct": 18.7,
+    "chromatin_intensity": 55.2,
+    "eosin_ratio": 38.1,
+    "color_variance": 21.4
+  },
+  "images": {
+    "original": "data:image/jpeg;base64,...",
+    "analyzed": "data:image/jpeg;base64,..."
+  }
+}
+```
+
+## ⚠️ Disclaimer
+
+This system is for **research and educational purposes only**.
+Not a certified clinical diagnostic tool.
+Always consult a qualified hematologist or pathologist.
+
+## 🔬 Features Analyzed
+
+- **Cell Morphology**: Overall shape and structure of blood cells
+- **Nuclear Size & Irregularity**: ALL blast cells have enlarged irregular nuclei
+- **Chromatin Pattern**: Hyperchromasia (dark staining) in cancerous nuclei  
+- **Nucleoli Prominence**: Prominent nucleoli are a hallmark of blast cells
+- **Cytoplasm-to-Nucleus Ratio**: ALL cells have reduced cytoplasm
+- **Cell Density**: Hypercellularity is common in leukemia samples

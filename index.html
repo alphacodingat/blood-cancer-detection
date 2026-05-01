@@ -1,0 +1,35 @@
+{
+  "model_type": "HematoScan CNN (6-Block)",
+  "dataset": "Kaggle Blood Cell Cancer [ALL] — Acute Lymphoblastic Leukemia",
+  "input_size": [96, 96, 3],
+  "classes": {
+    "0": "Benign (Normal HEM)",
+    "1": "Malignant (ALL Blast)"
+  },
+  "architecture": {
+    "conv_blocks": 6,
+    "total_parameters": 849313,
+    "regularization": ["BatchNorm", "Dropout(0.25-0.5)"],
+    "optimizer": "Adam",
+    "loss": "binary_crossentropy",
+    "output_activation": "sigmoid"
+  },
+  "training": {
+    "epochs": 30,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "augmentation": true,
+    "train_samples": 3200,
+    "val_samples": 800
+  },
+  "performance": {
+    "val_accuracy": 0.943,
+    "val_loss": 0.148,
+    "val_auc": 0.981,
+    "val_precision": 0.951,
+    "val_recall": 0.937,
+    "val_f1": 0.944
+  },
+  "version": "1.0.0",
+  "framework": "TensorFlow / Keras"
+}
